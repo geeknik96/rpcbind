@@ -1,0 +1,269 @@
+diff -Naur ./src_o/rpcbind.c ./src_p/rpcbind.c
+--- ./src_o/rpcbind.c	Tue Nov 25 23:34:48 2014
++++ ./src_p/rpcbind.c	Sun Mar 29 19:11:32 2015
+@@ -39,7 +39,8 @@
+  * Implements the program, version to address mapping for rpc.
+  *
+  */
+-
++#define WARMSTART
++#define PORTMAP
+ #include <sys/types.h>
+ #include <sys/stat.h>
+ #include <sys/errno.h>
+@@ -50,6 +51,7 @@
+ #include <sys/file.h>
+ #include <sys/socket.h>
+ #include <sys/un.h>
++#include <dirent.h>
+ #include <rpc/rpc.h>
+ #include <rpc/rpc_com.h>
+ #ifdef PORTMAP
+@@ -85,6 +87,7 @@
+ int debugging = 0;	/* Tell me what's going on */
+ int doabort = 0;	/* When debugging, do an abort on errors */
+ int dofork = 1;		/* fork? */
++int log_more = 0;   /* add in log info about netns */
+ 
+ rpcblist_ptr list_rbl;	/* A list of version 3/4 rpcbind services */
+ 
+@@ -103,7 +106,13 @@
+ /* who to suid to if -s is given */
+ #define RUN_AS  "daemon"
+ 
+-#define RPCBINDDLOCK "/var/run/rpcbind.lock"
++/*max len of "/var/run/rpcbind." + inode + ".lock" < 48 bytes */
++char RPCBINDDLOCK[48] = "/var/run/rpcbind";
++char log_filename[32] = "rpcbind";
++char RPCBFILE[45] = "/tmp/rpcbind";
++char rpcbindsock[45] = _PATH_RPCBINDSOCK;
++ino_t inode_app;
++
+ 
+ int runasdaemon = 0;
+ int insecure = 0;
+@@ -126,8 +135,9 @@
+ char *tcptrans;		/* Name of TCP transport */
+ char *udp_uaddr;	/* Universal UDP address */
+ char *tcp_uaddr;	/* Universal TCP address */
++char PMAPFILE[45] = "/tmp/portmap";
+ #endif
+-static char servname[] = "rpcbind";
++static char servname[] = "sunrpc";
+ static char superuser[] = "superuser";
+ 
+ int main __P((int, char *[]));
+@@ -138,6 +148,11 @@
+ static void terminate __P((int));
+ static void parseargs __P((int, char *[]));
+ 
++/*  functoin return in buff network namespace name. "" - default netns
++ *  buff must be fill 0!
++ */
++static void getnetns(char *buff, ino_t inode, dev_t dev);
++
+ int
+ main(int argc, char *argv[])
+ {
+@@ -146,6 +161,17 @@
+ 	struct rlimit rl;
+ 	int maxrec = RPC_MAXDATASIZE;
+ 
++    /* rpcbind.[inode].lock */
++    struct stat ns_inode;
++    if(stat("/proc/self/ns/net", &ns_inode)) {
++        fprintf(stderr, "Don`t get namespace. Aborting");
++        exit(1);
++    }
++    sprintf(RPCBINDDLOCK + 16, ".%u.lock", inode_app = ns_inode.st_ino);
++    sprintf(RPCBFILE + 12, ".%u.xdr", ns_inode.st_ino);
++#ifdef PORTMAP
++    sprintf(PMAPFILE + 12, ".%u.xdr", ns_inode.st_ino);
++#endif
+ 	parseargs(argc, argv);
+ 
+ 	/* Check that another rpcbind isn't already running. */
+@@ -154,7 +180,7 @@
+ 		err(1, "%s", RPCBINDDLOCK);
+ 
+ 	if(flock(rpcbindlockfd, LOCK_EX|LOCK_NB) == -1 && errno == EWOULDBLOCK)
+-		errx(1, "another rpcbind is already running. Aborting");
++        errx(1, "another rpcbind is already running in this netns. Aborting");
+ 
+ 	getrlimit(RLIMIT_NOFILE, &rl);
+ 	if (rl.rlim_cur < 128) {
+@@ -164,7 +190,16 @@
+ 			rl.rlim_cur = 128;
+ 		setrlimit(RLIMIT_NOFILE, &rl);
+ 	}
+-	openlog("rpcbind", LOG_CONS, LOG_DAEMON);
++
++    if(log_more == 1) {
++        char netns[256] = {};
++        sprintf(log_filename + 7, ".%u", ns_inode.st_ino);
++        openlog(log_filename, LOG_CONS, LOG_DAEMON);
++        getnetns(netns, ns_inode.st_ino, ns_inode.st_dev);
++        syslog(LOG_INFO, "run in [%s] namespace", netns);
++    }
++    else openlog(log_filename, LOG_CONS, LOG_DAEMON);
++
+ 	if (geteuid()) { /* This command allowed only to root */
+ 		fprintf(stderr, "Sorry. You are not superuser\n");
+ 		exit(1);
+@@ -405,8 +440,9 @@
+ 	    (strcmp(nconf->nc_netid, "unix") == 0)) {
+ 		memset(&sun, 0, sizeof sun);
+ 		sun.sun_family = AF_LOCAL;
+-		unlink(_PATH_RPCBINDSOCK);
+-		strcpy(sun.sun_path, _PATH_RPCBINDSOCK);
++        sprintf(rpcbindsock + 17, "%u.sock",  inode_app);
++        unlink(rpcbindsock);
++        strcpy(sun.sun_path, rpcbindsock);
+ 		addrlen = SUN_LEN(&sun);
+ 		sa = (struct sockaddr *)&sun;
+ 	} else {
+@@ -799,7 +835,7 @@
+ terminate(int dummy /*__unused*/)
+ {
+ 	close(rpcbindlockfd);
+-	unlink(_PATH_RPCBINDSOCK);
++    unlink(rpcbindsock);
+ 	unlink(RPCBINDDLOCK);
+ #ifdef WARMSTART
+ 	write_warmstart();	/* Dump yourself */
+@@ -822,7 +858,7 @@
+ {
+ 	int c;
+ 	oldstyle_local = 1;
+-	while ((c = getopt(argc, argv, "adh:ilswf")) != -1) {
++    while ((c = getopt(argc, argv, "adh:ilswfm")) != -1) {
+ 		switch (c) {
+ 		case 'a':
+ 			doabort = 1;	/* when debugging, do an abort on */
+@@ -852,13 +888,16 @@
+ 		case 'f':
+ 			dofork = 0;
+ 			break;
++        case 'm':
++            log_more = 1;
++            break;
+ #ifdef WARMSTART
+ 		case 'w':
+ 			warmstart = 1;
+ 			break;
+ #endif
+ 		default:	/* error */
+-			fprintf(stderr,	"usage: rpcbind [-adhilswf]\n");
++            fprintf(stderr,	"usage: rpcbind [-adhilswfm]\n");
+ 			exit (1);
+ 		}
+ 	}
+@@ -883,4 +922,25 @@
+ toggle_verboselog(int dummy /*__unused*/)
+ {
+ 	verboselog = !verboselog;
++}
++
++static void
++getnetns(char *buff, ino_t inode, dev_t dev)
++{
++    struct dirent *entry;
++    struct stat st;
++    char path[14 + 257] = "/var/run/netns";
++    mkdir(path, S_IRWXU|S_IRGRP|S_IXGRP|S_IROTH|S_IXOTH);
++    DIR *dir = opendir(path);
++
++    while((entry = readdir(dir)) != NULL) {
++        sprintf(path + 14, "/%s", entry->d_name );
++        stat(path, &st);
++        if (st.st_ino == inode &&
++            st.st_dev == dev ) {
++            strcpy(buff, entry->d_name);
++            break;
++        }
++    }
++    closedir(dir);
+ }
+diff -Naur ./src_o/rpcinfo.c ./src_p/rpcinfo.c
+--- ./src_o/rpcinfo.c	Tue Nov 25 23:34:48 2014
++++ ./src_p/rpcinfo.c	Sat Mar 28 21:07:30 2015
+@@ -60,6 +60,7 @@
+ #include <unistd.h>
+ #include <err.h>
+ #include <ctype.h>
++#include <sys/stat.h>
+ 
+ #ifdef PORTMAP			/* Support for version 2 portmapper */
+ #include <netinet/in.h>
+@@ -91,6 +92,8 @@
+ #define	RPCBADDRLIST	10	/* dump addr list about one prog */
+ #define	RPCBGETSTAT	11	/* Get statistics */
+ 
++char rpcbindsock[45] = _PATH_RPCBINDSOCK;
++
+ struct netidlist
+ {
+   char *netid;
+@@ -143,6 +146,7 @@
+ static bool_t add_version (struct rpcbdump_short *, u_long);
+ static bool_t add_netid (struct rpcbdump_short *, char *);
+ 
++
+ int main (int argc, char **argv);
+ 
+ int
+@@ -153,6 +157,14 @@
+   int function;
+   char *netid = NULL;
+   char *address = NULL;
++
++  struct stat ns_inode;
++  if(stat("/proc/self/ns/net", &ns_inode)) {
++      fprintf(stderr, "Don`t get namespace. Aborting");
++      exit(1);
++  }
++  sprintf(rpcbindsock + 17, "%u.sock", ns_inode.st_ino);
++
+ #ifdef PORTMAP
+   char *strptr;
+   u_short portnum = 0;
+@@ -346,7 +358,7 @@
+     return NULL;
+ 
+   sun.sun_family = AF_LOCAL;
+-  strcpy (sun.sun_path, _PATH_RPCBINDSOCK);
++  strcpy (sun.sun_path, rpcbindsock);
+   nbuf.len = SUN_LEN (&sun);
+   nbuf.maxlen = sizeof (struct sockaddr_un);
+   nbuf.buf = &sun;
+@@ -632,7 +644,7 @@
+ 	{
+ 	  memset (&hints, 0, sizeof hints);
+ 	  hints.ai_family = AF_INET;
+-	  if ((error = getaddrinfo (host, "rpcbind", &hints, &res)) != 0 &&
++	  if ((error = getaddrinfo (host, "sunrpc", &hints, &res)) != 0 &&
+               (error = getaddrinfo (host, "portmapper", &hints, &res)) != 0)
+ 	    {
+ 	      fprintf (stderr, "rpcinfo: %s: %s\n",
+diff -Naur ./src_o/warmstart.c ./src_p/warmstart.c
+--- ./src_o/warmstart.c	Tue Nov 25 23:34:48 2014
++++ ./src_p/warmstart.c	Sat Mar 28 20:30:28 2015
+@@ -48,15 +48,12 @@
+ 
+ #include "rpcbind.h"
+ 
+-#ifndef RPCBIND_STATEDIR
+-#define RPCBIND_STATEDIR "/tmp"
+-#endif
+-
+ /* These files keep the pmap_list and rpcb_list in XDR format */
+-#define	RPCBFILE	RPCBIND_STATEDIR "/rpcbind.xdr"
++extern char RPCBFILE[45];
+ #ifdef PORTMAP
+-#define	PMAPFILE	RPCBIND_STATEDIR "/portmap.xdr"
++extern char PMAPFILE[45];
+ #endif
++
+ 
+ static bool_t write_struct __P((char *, xdrproc_t, void *));
+ static bool_t read_struct __P((char *, xdrproc_t, void *));
