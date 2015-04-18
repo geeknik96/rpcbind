@@ -1,6 +1,6 @@
-diff -Naur ./src_o/rpcbind.c ./src_p/rpcbind.c
---- ./src_o/rpcbind.c	Tue Nov 25 23:34:48 2014
-+++ ./src_p/rpcbind.c	Sun Mar 29 19:11:32 2015
+diff -Naur src/rpcbind.c src_p/rpcbind.c
+--- src/rpcbind.c	Tue Nov 25 23:34:48 2014
++++ src_p/rpcbind.c	Sun Mar 29 19:11:32 2015
 @@ -39,7 +39,8 @@
   * Implements the program, version to address mapping for rpc.
   *
@@ -184,9 +184,9 @@ diff -Naur ./src_o/rpcbind.c ./src_p/rpcbind.c
 +    }
 +    closedir(dir);
  }
-diff -Naur ./src_o/rpcinfo.c ./src_p/rpcinfo.c
---- ./src_o/rpcinfo.c	Tue Nov 25 23:34:48 2014
-+++ ./src_p/rpcinfo.c	Sat Mar 28 21:07:30 2015
+diff -Naur src/rpcinfo.c src_p/rpcinfo.c
+--- src/rpcinfo.c	Tue Nov 25 23:34:48 2014
++++ src_p/rpcinfo.c	Sat Mar 28 21:07:30 2015
 @@ -60,6 +60,7 @@
  #include <unistd.h>
  #include <err.h>
@@ -245,9 +245,9 @@ diff -Naur ./src_o/rpcinfo.c ./src_p/rpcinfo.c
                (error = getaddrinfo (host, "portmapper", &hints, &res)) != 0)
  	    {
  	      fprintf (stderr, "rpcinfo: %s: %s\n",
-diff -Naur ./src_o/warmstart.c ./src_p/warmstart.c
---- ./src_o/warmstart.c	Tue Nov 25 23:34:48 2014
-+++ ./src_p/warmstart.c	Sat Mar 28 20:30:28 2015
+diff -Naur src/warmstart.c src_p/warmstart.c
+--- src/warmstart.c	Tue Nov 25 23:34:48 2014
++++ src_p/warmstart.c	Sat Mar 28 20:30:28 2015
 @@ -48,15 +48,12 @@
  
  #include "rpcbind.h"
